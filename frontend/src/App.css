@@ -1,0 +1,60 @@
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.topbar {
+  padding: 12px 24px;
+  border-bottom: 1px solid #d8dee8;
+}
+
+.topbar h1,
+.topbar p {
+  margin: 4px 0;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 250px;
+  flex: 1;
+  min-height: 0;
+}
+
+.palette,
+.properties {
+  padding: 16px;
+}
+
+.palette {
+  border-right: 1px solid #d8dee8;
+}
+
+.properties {
+  border-left: 1px solid #d8dee8;
+}
+
+.palette button {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.properties label {
+  display: block;
+  margin: 14px 0;
+}
+
+.properties input {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  padding: 8px;
+}
+
+.canvas {
+  min-width: 0;
+  min-height: 0;
+}
