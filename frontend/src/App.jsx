@@ -13,6 +13,17 @@ import '@xyflow/react/dist/style.css';
 import './App.css';
 
 function makeDevice(id, name, type, position) {
+  const interfaces =
+    type === 'switch'
+      ? []
+      : [
+          {
+            name: type === 'router' ? 'g0/0' : 'eth0',
+            ip: '',
+            mask: '',
+          },
+        ];
+
   return {
     id,
     position,
@@ -20,8 +31,7 @@ function makeDevice(id, name, type, position) {
       deviceType: type,
       name,
       label: name,
-      ip: '',
-      mask: '',
+      interfaces,
       gateway: '',
     },
   };
@@ -67,18 +77,23 @@ export default function App() {
 
   function updateSelected(field, value) {
     setNodes((current) =>
-      current.map((node) =>
-        node.id !== selectedId
-          ? node
-          : {
-              ...node,
-              data: {
-                ...node.data,
-                [field]: value,
-                ...(field === 'name' ? { label: value } : {}),
-              },
-            },
-      ),
+      current.map((node) => {
+        if (node.id !== selectedId) return node;
+
+        const data = { ...node.data };
+
+        if (field === 'name') {
+          data.name = value;
+          data.label = value;
+        } else if (field === 'gateway') {
+          data.gateway = value;
+        } else {
+          const key = field === 'interfaceName' ? 'name' : field;
+          data.interfaces = [{ ...data.interfaces[0], [key]: value }];
+        }
+
+        return { ...node, data };
+      }),
     );
   }
 
@@ -118,23 +133,62 @@ export default function App() {
 
         <aside className="properties">
           <h2>Properties</h2>
+
           {selectedNode ? (
             <>
               <p>{selectedNode.data.deviceType}</p>
-              {[
-                ['name', 'Name'],
-                ['ip', 'IP address'],
-                ['mask', 'Subnet mask'],
-                ['gateway', 'Gateway'],
-              ].map(([field, label]) => (
-                <label key={field}>
-                  {label}
+
+              <label>
+                Name
+                <input
+                  value={selectedNode.data.name}
+                  onChange={(event) => updateSelected('name', event.target.value)}
+                />
+              </label>
+
+              {selectedNode.data.deviceType !== 'switch' && (
+                <>
+                  <label>
+                    Interface
+                    <input
+                      value={selectedNode.data.interfaces[0].name}
+                      onChange={(event) =>
+                        updateSelected('interfaceName', event.target.value)
+                      }
+                    />
+                  </label>
+
+                  <label>
+                    IP address
+                    <input
+                      value={selectedNode.data.interfaces[0].ip}
+                      onChange={(event) => updateSelected('ip', event.target.value)}
+                    />
+                  </label>
+
+                  <label>
+                    Subnet mask
+                    <input
+                      value={selectedNode.data.interfaces[0].mask}
+                      onChange={(event) =>
+                        updateSelected('mask', event.target.value)
+                      }
+                    />
+                  </label>
+                </>
+              )}
+
+              {selectedNode.data.deviceType === 'host' && (
+                <label>
+                  Gateway
                   <input
-                    value={selectedNode.data[field] ?? ''}
-                    onChange={(event) => updateSelected(field, event.target.value)}
+                    value={selectedNode.data.gateway}
+                    onChange={(event) =>
+                      updateSelected('gateway', event.target.value)
+                    }
                   />
                 </label>
-              ))}
+              )}
             </>
           ) : (
             <p>Select a device on the canvas to edit it.</p>
