@@ -1,81 +1,37 @@
 """backend/checks/resilience.py  (owner: D)"""
+import networkx as nx
+
 INFRA = {"router", "switch"}
 
 
 def _build_graph(topology):
-    # Keep graph operations local so this check does not require NetworkX.
-    g = {"nodes": {}, "adj": {}, "counts": {}}
+    g = nx.Graph()
     for d in topology["devices"]:
-        node = d["id"]
-        g["nodes"][node] = {"type": d["type"], "name": d.get("name", node)}
-        g["adj"][node] = set()
+        g.add_node(d["id"], type=d["type"], name=d.get("name", d["id"]))
     for link in topology["links"]:
         a, b = link["a"]["device"], link["b"]["device"]
-        if a == b or a not in g["nodes"] or b not in g["nodes"]:
+        if a == b or a not in g or b not in g:
             continue
-        edge = frozenset((a, b))
-        g["adj"][a].add(b)
-        g["adj"][b].add(a)
-        g["counts"][edge] = g["counts"].get(edge, 0) + 1
+        if g.has_edge(a, b):
+            g[a][b]["count"] += 1      # parallel links = redundancy
+        else:
+            g.add_edge(a, b, count=1)
     return g
 
 
 def _parts(graph):
     """Connected components, largest first, deterministic order."""
-    unseen = set(graph["adj"])
-    components = []
-    while unseen:
-        start = min(unseen)
-        unseen.remove(start)
-        pending = [start]
-        component = set()
-        while pending:
-            node = pending.pop()
-            component.add(node)
-            discovered = graph["adj"][node] & unseen
-            unseen.difference_update(discovered)
-            pending.extend(discovered)
-        components.append(component)
-    return sorted(components, key=lambda c: (-len(c), sorted(c)))
+    return sorted(nx.connected_components(graph),
+                  key=lambda c: (-len(c), sorted(c)))
 
 
-def _induced_graph(graph, nodes):
-    nodes = set(nodes)
-    return {
-        "nodes": {n: graph["nodes"][n] for n in nodes},
-        "adj": {n: graph["adj"][n] & nodes for n in nodes},
-        "counts": {edge: count for edge, count in graph["counts"].items()
-                   if edge <= nodes},
-    }
-
-
-def _articulation_points(graph):
-    baseline = len(_parts(graph))
-    result = []
-    for node in graph["adj"]:
-        remaining = graph["adj"].keys() - {node}
-        if len(_parts(_induced_graph(graph, remaining))) > baseline:
-            result.append(node)
-    return result
-
-
-def _bridges(graph):
-    baseline = len(_parts(graph))
-    for edge, count in graph["counts"].items():
-        if count > 1:
-            continue
-        u, v = tuple(edge)
-        reduced = {"adj": {n: set(neighbors)
-                           for n, neighbors in graph["adj"].items()}}
-        reduced["adj"][u].remove(v)
-        reduced["adj"][v].remove(u)
-        if len(_parts(reduced)) > baseline:
-            yield u, v
+def _infra(g):
+    return g.subgraph([n for n, t in g.nodes(data="type") if t in INFRA]).copy()
 
 
 def run(topology):
     g = _build_graph(topology)
-    name = lambda n: g["nodes"][n]["name"]
+    name = lambda n: g.nodes[n]["name"]
     findings = []
 
     def add(severity, category, message, devices, suggestion):
@@ -97,13 +53,11 @@ def run(topology):
             "Connect this segment to the main network with at least one link")
 
     # 2. Single points of failure among routers/switches
-    infra_nodes = [n for n, attrs in g["nodes"].items()
-                   if attrs["type"] in INFRA]
-    infra = _induced_graph(g, infra_nodes)
+    infra = _infra(g)
 
-    for node in sorted(_articulation_points(infra)):
-        component = next(part for part in _parts(infra) if node in part)
-        scope = _induced_graph(infra, component - {node})
+    for node in sorted(nx.articulation_points(infra)):
+        scope = infra.subgraph(nx.node_connected_component(infra, node)).copy()
+        scope.remove_node(node)
         parts = _parts(scope)
         cut_off = sorted(n for p in parts[1:] for n in p)
         add("error", "resilience",
@@ -113,7 +67,9 @@ def run(topology):
             [node] + cut_off,
             "Add a redundant link or second device so traffic has an alternate path")
 
-    for u, v in _bridges(infra):
+    for u, v in nx.bridges(infra):
+        if infra[u][v]["count"] > 1:
+            continue
         add("warning", "resilience",
             f"Link {name(u)}-{name(v)} is a single point of failure: it is the "
             f"only path between two parts of the network",
@@ -122,19 +78,77 @@ def run(topology):
 
     # 3. Hosts with a single uplink
     uplinks = {}
-    for n, attrs in g["nodes"].items():
-        if attrs["type"] == "host" and len(g["adj"][n]) == 1:
-            (peer,) = g["adj"][n]
-            if g["counts"][frozenset((n, peer))] == 1:
+    for n, t in g.nodes(data="type"):
+        if t == "host" and g.degree(n) == 1:
+            (peer,) = g.neighbors(n)
+            if g[n][peer]["count"] == 1:
                 uplinks.setdefault(peer, []).append(n)
     for peer, hosts in sorted(uplinks.items()):
         names = ", ".join(sorted(name(h) for h in hosts))
+        verb = "depends" if len(hosts) == 1 else "depend"
         add("info", "resilience",
-            f"{names} depend on {name(peer)} as their only connection",
+            f"{names} {verb} on {name(peer)} as their only connection",
             sorted(hosts) + [peer],
             "Fine for end-user PCs; servers should connect to two switches")
 
     return findings
+
+
+def simulate_failure(topology, device_id):
+    """What-if: remove one device and report the damage."""
+    g = _build_graph(topology)
+    if device_id not in g:
+        raise ValueError(f"Unknown device: {device_id}")
+
+    failed_name = g.nodes[device_id]["name"]
+    had_router = any(t == "router" for _, t in g.nodes(data="type"))
+    g.remove_node(device_id)
+
+    parts = _parts(g)
+    cut_off = sorted(n for p in parts[1:] for n in p)
+
+    hosts_without_router = []
+    if had_router:
+        for p in parts:
+            if not any(g.nodes[x]["type"] == "router" for x in p):
+                hosts_without_router += [n for n in p if g.nodes[n]["type"] == "host"]
+
+    return {
+        "failed": device_id,
+        "failed_name": failed_name,
+        "parts": len(parts),
+        "cut_off": cut_off,
+        "hosts_without_router": sorted(hosts_without_router),
+    }
+
+
+def redundancy_score(topology):
+    """0-100 score: 50% device redundancy, 30% link redundancy, 20% connectivity."""
+    g = _build_graph(topology)
+    infra = _infra(g)
+
+    n_infra = infra.number_of_nodes()
+    spof_nodes = len(list(nx.articulation_points(infra)))
+    device_part = 1 - spof_nodes / n_infra if n_infra else 1.0
+
+    n_links = infra.number_of_edges()
+    bridges = sum(1 for u, v in nx.bridges(infra) if infra[u][v]["count"] == 1)
+    link_part = 1 - bridges / n_links if n_links else 1.0
+
+    total = g.number_of_nodes()
+    conn_part = len(_parts(g)[0]) / total if total else 1.0
+
+    score = round(50 * device_part + 30 * link_part + 20 * conn_part)
+    label = "Good" if score >= 80 else "Fair" if score >= 50 else "Poor"
+    return {
+        "score": score,
+        "label": label,
+        "breakdown": {
+            "devices": round(device_part * 100),
+            "links": round(link_part * 100),
+            "connectivity": round(conn_part * 100),
+        },
+    }
 
 
 if __name__ == "__main__":
@@ -155,3 +169,9 @@ if __name__ == "__main__":
         print(f"\n== {label} ==")
         for f in run(topo(devs, links)):
             print(f["id"], f["severity"], "-", f["message"])
+
+    print("\n== WHAT IF SW1 FAILS? (chain) ==")
+    print(simulate_failure(topo(devs, chain), "sw1"))
+    print("\n== SCORES ==")
+    print("CHAIN    ", redundancy_score(topo(devs, chain)))
+    print("REDUNDANT", redundancy_score(topo(devs, chain + [("r1", "sw2")])))
