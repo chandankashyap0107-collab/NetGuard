@@ -90,7 +90,20 @@ def run(topology):
             f"{names} {verb} on {name(peer)} as their only connection",
             sorted(hosts) + [peer],
             "Fine for end-user PCs; servers should connect to two switches")
-
+        # 4. Layer 2 loops (cycles made only of switches; routers stop broadcasts)
+    switches = g.subgraph([n for n, t in g.nodes(data="type") if t == "switch"])
+    for comp in _parts(switches):
+        sub = switches.subgraph(comp)
+        link_count = sum(d["count"] for _, _, d in sub.edges(data=True))
+        loops = link_count - len(comp) + 1     # independent loops in this group
+        if loops > 0:
+            names = ", ".join(sorted(name(n) for n in comp))
+            add("warning", "resilience",
+                f"Layer 2 loop among switches {names} ({loops} independent "
+                f"loop{'s' if loops > 1 else ''}). Without Spanning Tree Protocol, "
+                f"broadcasts circulate forever and can bring the network down",
+                sorted(comp),
+                "Enable STP/RSTP on these switches, or remove a link to break the loop")
     return findings
 
 
@@ -175,3 +188,18 @@ if __name__ == "__main__":
     print("\n== SCORES ==")
     print("CHAIN    ", redundancy_score(topo(devs, chain)))
     print("REDUNDANT", redundancy_score(topo(devs, chain + [("r1", "sw2")])))
+    loop_devs = [("r1", "router"), ("sw1", "switch"), ("sw2", "switch"),
+                 ("sw3", "switch"), ("h1", "host")]
+    triangle = [("r1", "sw1"), ("sw1", "sw2"), ("sw2", "sw3"),
+                ("sw3", "sw1"), ("sw3", "h1")]
+    print("\n== SWITCH TRIANGLE ==")
+    for f in run(topo(loop_devs, triangle)):
+        print(f["id"], f["severity"], "-", f["message"])
+
+    print("\n== L2 LOOP CHECK ==")
+    cases = [("chain", chain),
+             ("router triangle", chain + [("r1", "sw2")]),
+             ("parallel switch link", chain + [("sw1", "sw2")])]
+    for label, links in cases:
+        found = [f for f in run(topo(devs, links)) if "Layer 2 loop" in f["message"]]
+        print(f"{label:22} -> {len(found)} loop warning(s)")
