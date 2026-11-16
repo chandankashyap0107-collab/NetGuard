@@ -1,0 +1,118 @@
+{
+    "devices": [
+        {
+            "id": "r1",
+            "type": "router",
+            "name": "R1",
+            "interfaces": [
+                {
+                    "name": "g0/0",
+                    "ip": "10.0.1.1",
+                    "mask": "255.255.255.0"
+                }
+            ]
+        },
+        {
+            "id": "sw1",
+            "type": "switch",
+            "name": "SW1",
+            "interfaces": []
+        },
+        {
+            "id": "sw2",
+            "type": "switch",
+            "name": "SW2",
+            "interfaces": []
+        },
+        {
+            "id": "pc1",
+            "type": "host",
+            "name": "PC1",
+            "gateway": "10.0.1.1",
+            "interfaces": [
+                {
+                    "name": "eth0",
+                    "ip": "10.0.1.10",
+                    "mask": "255.255.255.0"
+                }
+            ]
+        },
+        {
+            "id": "pc2",
+            "type": "host",
+            "name": "PC2",
+            "gateway": "10.0.1.1",
+            "interfaces": [
+                {
+                    "name": "eth0",
+                    "ip": "10.0.1.11",
+                    "mask": "255.255.255.0"
+                }
+            ]
+        },
+        {
+            "id": "srv1",
+            "type": "host",
+            "name": "Server1",
+            "gateway": "10.0.1.1",
+            "interfaces": [
+                {
+                    "name": "eth0",
+                    "ip": "10.0.1.20",
+                    "mask": "255.255.255.0"
+                }
+            ]
+        }
+    ],
+    "links": [
+        {
+            "id": "l1",
+            "a": {
+                "device": "r1",
+                "iface": "g0/0"
+            },
+            "b": {
+                "device": "sw1"
+            }
+        },
+        {
+            "id": "l2",
+            "a": {
+                "device": "sw1"
+            },
+            "b": {
+                "device": "sw2"
+            }
+        },
+        {
+            "id": "l3",
+            "a": {
+                "device": "pc1",
+                "iface": "eth0"
+            },
+            "b": {
+                "device": "sw1"
+            }
+        },
+        {
+            "id": "l4",
+            "a": {
+                "device": "pc2",
+                "iface": "eth0"
+            },
+            "b": {
+                "device": "sw1"
+            }
+        },
+        {
+            "id": "l5",
+            "a": {
+                "device": "srv1",
+                "iface": "eth0"
+            },
+            "b": {
+                "device": "sw2"
+            }
+        }
+    ]
+}

@@ -162,7 +162,9 @@ def redundancy_score(topology):
             "connectivity": round(conn_part * 100),
         },
     }
-
+def analyze(topology):
+    """Single call for the API/UI: findings plus redundancy score."""
+    return {"findings": run(topology), "score": redundancy_score(topology)}
 
 if __name__ == "__main__":
     def topo(devs, links):
